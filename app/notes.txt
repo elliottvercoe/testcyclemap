@@ -1,2 +1,0 @@
-clicking start navigation before route is done crashes app
-

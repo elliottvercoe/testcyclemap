@@ -2,6 +2,8 @@ package com.example.testcyclemap;
 
 import android.graphics.BitmapFactory;
 import android.os.Bundle;
+
+import java.util.ArrayList;
 import java.util.List;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -27,6 +29,7 @@ import com.mapbox.mapboxsdk.location.modes.CameraMode;
 import com.mapbox.geojson.Feature;
 import com.mapbox.geojson.Point;
 import com.mapbox.mapboxsdk.geometry.LatLng;
+import com.mapbox.mapboxsdk.style.layers.Layer;
 import com.mapbox.mapboxsdk.style.layers.SymbolLayer;
 import com.mapbox.mapboxsdk.style.sources.GeoJsonSource;
 
@@ -51,6 +54,11 @@ import android.view.View;
 import android.widget.Button;
 import com.mapbox.services.android.navigation.ui.v5.NavigationLauncher;
 
+// toggle layers
+import static com.mapbox.mapboxsdk.style.layers.Property.NONE;
+import static com.mapbox.mapboxsdk.style.layers.Property.VISIBLE;
+import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.visibility;
+
 
 
 public class MainActivity extends AppCompatActivity implements OnMapReadyCallback, MapboxMap.OnMapClickListener, PermissionsListener {
@@ -65,8 +73,10 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     private DirectionsRoute currentRoute;
     private static final String TAG = "DirectionsActivity";
     private NavigationMapRoute navigationMapRoute;
+    private ArrayList<Point> waypoints;
     // variables needed to initialize navigation
-    private Button button;
+    private Button startButton;
+    private Button undoButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -84,18 +94,20 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         mapboxMap.setStyle(getString(R.string.navigation_guidance_day), new Style.OnStyleLoaded() {
             @Override
             public void onStyleLoaded(@NonNull Style style) {
+                waypoints = new ArrayList<Point>();
+
                 enableLocationComponent(style);
 
                 addDestinationIconSymbolLayer(style);
 
                 mapboxMap.addOnMapClickListener(MainActivity.this);
-                button = findViewById(R.id.startButton);
-                button.setOnClickListener(new View.OnClickListener() {
+                startButton = findViewById(R.id.startButton);
+                startButton.setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
                         boolean simulateRoute = true;
                         // If the current Route hasn't loaded yet, don't do anything on click.
-                        if (!button.isEnabled()) {
+                        if (!startButton.isEnabled()) {
                             return;
                         }
                         NavigationLauncherOptions options = NavigationLauncherOptions.builder()
@@ -106,6 +118,40 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                         NavigationLauncher.startNavigation(MainActivity.this, options);
                     }
                 });
+
+                undoButton = findViewById(R.id.undoButton);
+                undoButton.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        if (!undoButton.isEnabled()) {
+                            return;
+                        }
+                        navigationMapRoute.removeRoute();
+
+                        // Use some tricky logic to cut off the last point and reprocess
+                        if (waypoints.size() > 0) {
+                            waypoints.remove(waypoints.size() - 1);
+                            showLayer(false);
+                            if (waypoints.size() > 0 ) {
+                                // Pop the last element and recalculate route
+                                processPoint(waypoints.remove(waypoints.size() - 1));
+                            }
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    private void showLayer(final boolean showing) {
+        mapboxMap.getStyle(new Style.OnStyleLoaded() {
+            @Override
+            public void onStyleLoaded(@NonNull Style style) {
+                Layer layer = style.getLayer("destination-symbol-layer-id");
+                if (layer != null) {
+                    String state = showing ? VISIBLE : NONE;
+                    layer.setProperties(visibility(state));
+                }
             }
         });
     }
@@ -123,33 +169,47 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                 iconIgnorePlacement(true)
         );
         loadedMapStyle.addLayer(destinationSymbolLayer);
+        showLayer(true);
     }
 
     @SuppressWarnings( {"MissingPermission"})
     @Override
     public boolean onMapClick(@NonNull LatLng point) {
-
-        Point destinationPoint = Point.fromLngLat(point.getLongitude(), point.getLatitude());
-        Point originPoint = Point.fromLngLat(locationComponent.getLastKnownLocation().getLongitude(),
-                locationComponent.getLastKnownLocation().getLatitude());
-
-        GeoJsonSource source = mapboxMap.getStyle().getSourceAs("destination-source-id");
-        if (source != null) {
-            source.setGeoJson(Feature.fromGeometry(destinationPoint));
-        }
-
-        getRoute(originPoint, destinationPoint);
+        processPoint(Point.fromLngLat(point.getLongitude(), point.getLatitude()));
         return true;
     }
 
+    private void processPoint(Point destinationPoint) {
+        if (waypoints.size() >= 23) {
+            Toast.makeText(this, R.string.too_many_waypoints, Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        Point originPoint = Point.fromLngLat(locationComponent.getLastKnownLocation().getLongitude(),
+                locationComponent.getLastKnownLocation().getLatitude());
+
+        waypoints.add(destinationPoint);
+
+        GeoJsonSource source = mapboxMap.getStyle().getSourceAs("destination-source-id");
+        if (source != null) {
+            source.setGeoJson(Feature.fromGeometry(waypoints.get(waypoints.size() - 1)));
+        }
+
+        getRoute(originPoint, waypoints.get(waypoints.size() - 1));
+    }
+
     private void getRoute(Point origin, Point destination) {
-        button.setEnabled(false);
-        button.setBackgroundResource(R.color.mapboxGrayLight);
-        NavigationRoute.builder(this)
+        startButton.setEnabled(false);
+        startButton.setBackgroundResource(R.color.mapboxGrayLight);
+        NavigationRoute.Builder builder = NavigationRoute.builder(this)
                 .accessToken(Mapbox.getAccessToken())
                 .profile(PROFILE_CYCLING)
                 .origin(origin)
-                .destination(destination)
+                .destination(destination);
+        for (Point waypoint : waypoints) {
+            builder.addWaypoint(waypoint);
+        }
+        builder
                 .build()
                 .getRoute(new Callback<DirectionsResponse>() {
                     @Override
@@ -173,8 +233,11 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                             navigationMapRoute = new NavigationMapRoute(null, mapView, mapboxMap, R.style.NavigationMapRoute);
                         }
                         navigationMapRoute.addRoute(currentRoute);
-                        button.setEnabled(true);
-                        button.setBackgroundResource(R.color.mapbox_blue);
+
+                        // Set paramaters now that route is finished
+                        startButton.setEnabled(true);
+                        startButton.setBackgroundResource(R.color.mapbox_blue);
+                        showLayer(true);
                     }
 
                     @Override

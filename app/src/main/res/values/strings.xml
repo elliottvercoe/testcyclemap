@@ -3,4 +3,5 @@
     <string name="access_token" translatable="false">pk.eyJ1IjoidGgzbGxpb3R0IiwiYSI6ImNrOHd0NTFncjBmdHkza29lZ3NpeWl0N2gifQ.hXK62O6E0Ql7hfuK-HakxA</string>
     <string name="user_location_permission_explanation">This app needs location permissions to show its functionality.</string>
     <string name="user_location_permission_not_granted">You didn\'t grant location permissions.</string>
+    <string name="too_many_waypoints">Maximum 25 waypoints are permitted (including origin and destination).</string>
 </resources>
